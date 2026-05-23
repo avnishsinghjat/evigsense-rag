@@ -1,0 +1,6 @@
+-- Grant admin role to avnish@evigway.com
+INSERT INTO public.user_roles (user_id, role)
+SELECT id, 'admin'::app_role
+FROM auth.users
+WHERE email = 'avnish@evigway.com'
+ON CONFLICT (user_id, role) DO NOTHING;

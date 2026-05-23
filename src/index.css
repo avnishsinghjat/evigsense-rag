@@ -1,0 +1,220 @@
+/* Import fonts - must be before @tailwind directives */
+@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Base colors - Deep Blue & Cyan theme */
+    --background: 220 18% 97%;
+    --foreground: 220 25% 10%;
+
+    /* Card colors */
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+
+    /* Popover colors */
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+
+    /* Primary - Deep Blue */
+    --primary: 217 91% 35%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 217 91% 45%;
+
+    /* Secondary - Cyan accent */
+    --secondary: 187 85% 45%;
+    --secondary-foreground: 0 0% 100%;
+
+    /* Muted colors */
+    --muted: 220 15% 92%;
+    --muted-foreground: 220 10% 45%;
+
+    /* Accent - Bright Cyan */
+    --accent: 187 85% 55%;
+    --accent-foreground: 220 25% 10%;
+
+    /* Destructive */
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Border & Input */
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 217 91% 45%;
+
+    --radius: 0.5rem;
+
+    /* Sidebar colors */
+    --sidebar-background: 217 91% 35%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 187 85% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 217 91% 30%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 217 91% 40%;
+    --sidebar-ring: 187 85% 55%;
+
+    /* Custom gradients */
+    --gradient-hero: linear-gradient(135deg, hsl(217, 91%, 35%), hsl(187, 85%, 45%));
+    --gradient-card: linear-gradient(180deg, hsl(0, 0%, 100%), hsl(220, 18%, 98%));
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(220 25% 10% / 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(220 25% 10% / 0.1);
+    --shadow-lg: 0 10px 15px -3px hsl(220 25% 10% / 0.1);
+    --shadow-glow: 0 0 30px hsl(217 91% 45% / 0.3);
+
+    /* Transitions */
+    --transition-smooth: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Chart colors */
+    --chart-1: 142 76% 36%;
+    --chart-2: 217 91% 45%;
+    --chart-3: 187 85% 45%;
+    --chart-4: 45 93% 47%;
+    --chart-5: 12 76% 61%;
+  }
+
+  .dark {
+    --background: 220 25% 8%;
+    --foreground: 220 18% 95%;
+
+    --card: 220 25% 10%;
+    --card-foreground: 220 18% 95%;
+
+    --popover: 220 25% 10%;
+    --popover-foreground: 220 18% 95%;
+
+    --primary: 217 91% 45%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 217 91% 55%;
+
+    --secondary: 187 85% 45%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 220 25% 15%;
+    --muted-foreground: 220 15% 60%;
+
+    --accent: 187 85% 55%;
+    --accent-foreground: 220 25% 10%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 25% 20%;
+    --input: 220 25% 20%;
+    --ring: 217 91% 55%;
+
+    --sidebar-background: 220 25% 10%;
+    --sidebar-foreground: 220 18% 95%;
+    --sidebar-primary: 217 91% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 25% 15%;
+    --sidebar-accent-foreground: 220 18% 95%;
+    --sidebar-border: 220 25% 20%;
+    --sidebar-ring: 187 85% 55%;
+
+    --gradient-hero: linear-gradient(135deg, hsl(217, 91%, 45%), hsl(187, 85%, 45%));
+    --gradient-card: linear-gradient(180deg, hsl(220, 25%, 10%), hsl(220, 25%, 12%));
+    
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
+    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.4);
+    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.5);
+    --shadow-glow: 0 0 30px hsl(217 91% 55% / 0.4);
+
+    /* Chart colors */
+    --chart-1: 142 76% 36%;
+    --chart-2: 217 91% 55%;
+    --chart-3: 187 85% 55%;
+    --chart-4: 45 93% 57%;
+    --chart-5: 12 76% 71%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+  
+  /* TipTap Editor Styles */
+  .prose {
+    @apply text-foreground;
+  }
+  
+  .prose h1 {
+    @apply text-3xl font-bold mb-4 mt-6 text-foreground;
+  }
+  
+  .prose h2 {
+    @apply text-2xl font-bold mb-3 mt-5 text-foreground;
+  }
+  
+  .prose h3 {
+    @apply text-xl font-bold mb-2 mt-4 text-foreground;
+  }
+  
+  .prose p {
+    @apply mb-3 text-foreground;
+  }
+  
+  .prose ul, .prose ol {
+    @apply mb-3 pl-6 text-foreground;
+  }
+  
+  .prose ul {
+    @apply list-disc;
+  }
+  
+  .prose ol {
+    @apply list-decimal;
+  }
+  
+  .prose li {
+    @apply mb-1;
+  }
+  
+  .prose blockquote {
+    @apply border-l-4 border-primary pl-4 italic my-4 text-muted-foreground;
+  }
+  
+  .prose code {
+    @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono;
+  }
+  
+  .prose strong {
+    @apply font-bold;
+  }
+  
+  .prose em {
+    @apply italic;
+  }
+  
+  .prose img {
+    @apply rounded-lg my-4 max-w-full h-auto;
+  }
+  
+  /* Placeholder styles */
+  .ProseMirror p.is-editor-empty:first-child::before {
+    color: hsl(var(--muted-foreground));
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    pointer-events: none;
+  }
+  
+  /* Image selection styles */
+  .ProseMirror img.ProseMirror-selectednode {
+    @apply outline outline-2 outline-primary outline-offset-2;
+  }
+}
