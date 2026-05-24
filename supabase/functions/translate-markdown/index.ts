@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { chatCompletionText, getChatModel } from "../_shared/ai.ts";
+import { chatCompletionText, getTranslateModel, stripThinkTags } from "../_shared/ai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,9 +7,17 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const TRANSLATION_TIMEOUT_MS = 90_000;
+// Translations on local Qwen3 with thinking disabled fit comfortably under
+// 4 minutes per chunk; the supabase edge worker timeout is 400s (see main/index.ts).
+// LM Studio with default (single-slot) inference can queue concurrent requests,
+// so we keep enough headroom to absorb queueing without aborting the model mid-generation.
+const TRANSLATION_TIMEOUT_MS = 180_000;
 
-const SYSTEM_PROMPT = `You are a professional document translator. Translate the provided Markdown into the target language while preserving the Markdown structure exactly. Keep headings, lists, tables, links, image placeholders, code blocks, math, and layout intact. Do not remove any content. Do not summarize. If the Markdown contains image_description blocks, translate those descriptions clearly. If a visual diagram or figure is referenced, preserve the block and ensure the description is useful.
+// Prefix `/no_think` is a Qwen3 directive that disables internal chain-of-thought
+// generation. Without it the model burns most of its token budget thinking and
+// often gets aborted before emitting any translation.
+const SYSTEM_PROMPT = `/no_think
+You are a professional document translator. Translate the provided Markdown into the target language while preserving the Markdown structure exactly. Keep headings, lists, tables, links, image placeholders, code blocks, math, and layout intact. Do not remove any content. Do not summarize. If the Markdown contains image_description blocks, translate those descriptions clearly. If a visual diagram or figure is referenced, preserve the block and ensure the description is useful.
 
 Additional rules:
 - Do NOT translate code, file names, URLs, variable names, or technical identifiers unless clearly natural language.
@@ -17,7 +25,7 @@ Additional rules:
 - Preserve heading levels (#, ##, ###), bullet indentation, numbering, and horizontal rules.
 - Preserve image syntax exactly: ![Figure N](image-placeholder)
 - Preserve ::: image_description ... ::: fences exactly; only translate the text inside them.
-- Output ONLY the translated Markdown, no commentary or extra wrapping.`;
+- Output ONLY the translated Markdown, no commentary, no <think> tags, no extra wrapping.`;
 
 interface RequestBody {
   documentId: string;
@@ -57,14 +65,27 @@ async function translateChunk({
           content: `${chunkContext}\nTarget language: ${targetLanguage}\n\nMarkdown to translate:\n\n${markdown}`,
         },
       ],
-      { temperature: 0.2, signal: controller.signal },
+      {
+        model: getTranslateModel(),
+        temperature: 0.2,
+        max_tokens: 4096,
+        signal: controller.signal,
+        // LM Studio passes chat_template_kwargs through to llama.cpp/Qwen,
+        // disabling the thinking phase even if `/no_think` is ignored.
+        extra: { chat_template_kwargs: { enable_thinking: false } },
+      },
     );
 
-    if (!translated.trim()) throw new Error("Translation model returned empty content");
-    return translated;
+    const cleaned = stripThinkTags(translated);
+    if (!cleaned.trim()) throw new Error("Translation model returned empty content");
+    return cleaned;
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("Translation model request timed out before Supabase idle timeout. Try a smaller chunk.");
+      throw new Error(
+        `Translation model request timed out after ${TRANSLATION_TIMEOUT_MS / 1000}s ` +
+          `(model=${getTranslateModel()}). LM Studio may be queueing concurrent requests; ` +
+          `lower VITE_TRANSLATION_CONCURRENCY or enable parallel generation in LM Studio.`,
+      );
     }
     throw error;
   } finally {
@@ -124,7 +145,7 @@ Deno.serve(async (req) => {
             ocr_markdown: sourceMarkdown ?? "",
             translated_markdown: body.translatedMarkdown,
             target_language: body.targetLanguage,
-            translation_model: getChatModel(),
+            translation_model: getTranslateModel(),
             created_by: user.id,
           },
           { onConflict: "document_id" },
@@ -134,7 +155,12 @@ Deno.serve(async (req) => {
 
       if (upErr) throw new Error(`Failed to save translation: ${upErr.message}`);
       return new Response(
-        JSON.stringify({ success: true, translatedMarkdown: body.translatedMarkdown, record: upserted }),
+        JSON.stringify({
+          success: true,
+          translatedMarkdown: body.translatedMarkdown,
+          record: upserted,
+          model: getTranslateModel(),
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -155,7 +181,7 @@ Deno.serve(async (req) => {
 
     if (body.persist === false) {
       return new Response(
-        JSON.stringify({ success: true, translatedMarkdown: translated, model: getChatModel() }),
+        JSON.stringify({ success: true, translatedMarkdown: translated, model: getTranslateModel() }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -168,7 +194,7 @@ Deno.serve(async (req) => {
           ocr_markdown: sourceMarkdown,
           translated_markdown: translated,
           target_language: body.targetLanguage,
-          translation_model: getChatModel(),
+          translation_model: getTranslateModel(),
           created_by: user.id,
         },
         { onConflict: "document_id" },
@@ -179,7 +205,12 @@ Deno.serve(async (req) => {
     if (upErr) throw new Error(`Failed to save translation: ${upErr.message}`);
 
     return new Response(
-      JSON.stringify({ success: true, translatedMarkdown: translated, record: upserted }),
+      JSON.stringify({
+        success: true,
+        translatedMarkdown: translated,
+        record: upserted,
+        model: getTranslateModel(),
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error: unknown) {

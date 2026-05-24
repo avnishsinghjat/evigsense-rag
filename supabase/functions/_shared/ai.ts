@@ -15,6 +15,10 @@ export function getChatModel(): string {
   return Deno.env.get("LMSTUDIO_CHAT_MODEL") ?? "local-chat";
 }
 
+export function getTranslateModel(): string {
+  return Deno.env.get("LMSTUDIO_TRANSLATE_MODEL") ?? getChatModel();
+}
+
 export function getEmbedModel(): string {
   return Deno.env.get("LMSTUDIO_EMBED_MODEL") ?? "bge-m3";
 }
@@ -39,6 +43,24 @@ export interface ChatOptions {
   reasoning_effort?: "low" | "medium" | "high";
   /** Extra body params to pass through to LM Studio (e.g. backend-specific knobs). */
   extra?: Record<string, unknown>;
+}
+
+/**
+ * Removes `<think>...</think>` (and common variants) blocks that some
+ * reasoning models emit inline in the assistant message content. Qwen3 in
+ * particular streams a chain-of-thought into `content` before the actual
+ * answer when "thinking" mode is on.
+ */
+export function stripThinkTags(text: string): string {
+  if (!text) return text;
+  let out = text;
+  // Closed think blocks: <think>...</think>, <thinking>...</thinking>, <reasoning>...</reasoning>
+  out = out.replace(/<\s*(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, "");
+  // Unclosed leading think block (model never emitted the close tag)
+  out = out.replace(/^[\s\S]*?<\s*\/\s*(think|thinking|reasoning)\s*>/i, "");
+  // Stray opening tag with no close: drop everything from the tag on
+  out = out.replace(/<\s*(think|thinking|reasoning)\b[^>]*>[\s\S]*$/i, "");
+  return out.trim();
 }
 
 export async function chat(
@@ -79,7 +101,8 @@ export async function chatCompletionText(
   const data = await res.json();
   const choice = data?.choices?.[0];
   const message = choice?.message ?? {};
-  const content: string = typeof message.content === "string" ? message.content : "";
+  const rawContent: string = typeof message.content === "string" ? message.content : "";
+  const content = stripThinkTags(rawContent);
   const finishReason: string | undefined = choice?.finish_reason;
   const usage = data?.usage ?? {};
   const completionTokens: number | undefined = usage.completion_tokens;
@@ -91,8 +114,9 @@ export async function chatCompletionText(
   // emit the actual answer into `reasoning_content` and leave `content` blank,
   // especially when the token budget is too small. Fall back to it if it looks
   // like a useful payload rather than throwing.
-  const reasoningContent: string =
-    typeof message.reasoning_content === "string" ? message.reasoning_content : "";
+  const reasoningContent: string = stripThinkTags(
+    typeof message.reasoning_content === "string" ? message.reasoning_content : "",
+  );
   if (reasoningContent.trim().length > 0) {
     console.warn(
       `[ai] LM Studio returned empty content; falling back to reasoning_content ` +

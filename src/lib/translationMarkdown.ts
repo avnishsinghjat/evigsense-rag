@@ -11,6 +11,26 @@ interface TranslateProgress {
 interface TranslateMarkdownOptions {
   onProgress?: (progress: TranslateProgress) => void;
   maxChunkChars?: number;
+  /** Max parallel translate-markdown invocations. Defaults to VITE_TRANSLATION_CONCURRENCY or 2. */
+  concurrency?: number;
+  /** Number of retries per page on transient failures. Defaults to 2. */
+  retries?: number;
+}
+
+const MAX_PAGE_CHARS = 8_000;
+const FALLBACK_CHUNK_CHARS = 8_000;
+const PAGE_SEPARATOR_RE = /\n{2,}\s*---+\s*\n{2,}/g;
+const DEFAULT_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 1_500;
+
+function getDefaultConcurrency(): number {
+  const raw = (import.meta as ImportMeta & { env?: Record<string, string> })?.env
+    ?.VITE_TRANSLATION_CONCURRENCY;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  // LM Studio default config processes one chat completion at a time.
+  // 2 is a safe default that hides network latency without queuing far past timeouts.
+  return 2;
 }
 
 export type OCRProgressPhase = "preparing" | "rendering" | "ocr" | "saving";
@@ -123,51 +143,176 @@ export async function generateOCRMarkdown(
   };
 }
 
+interface PageSplit {
+  pages: string[];
+  separators: string[];
+}
+
+function splitMarkdownByPages(markdown: string): PageSplit {
+  const pages: string[] = [];
+  const separators: string[] = [];
+  let lastIndex = 0;
+  PAGE_SEPARATOR_RE.lastIndex = 0;
+
+  let match: RegExpExecArray | null;
+  while ((match = PAGE_SEPARATOR_RE.exec(markdown)) !== null) {
+    pages.push(markdown.slice(lastIndex, match.index));
+    separators.push(match[0]);
+    lastIndex = match.index + match[0].length;
+  }
+  pages.push(markdown.slice(lastIndex));
+
+  return { pages, separators };
+}
+
+function shouldSkipTranslation(page: string): boolean {
+  const trimmed = page.trim();
+  if (!trimmed) return true;
+  if (/^!\[[^\]]*\]\([^)]*\)\s*$/.test(trimmed)) return true;
+  if (/^```[\s\S]*```\s*$/.test(trimmed)) return true;
+  return false;
+}
+
+function rejoinPages(pages: string[], separators: string[]): string {
+  if (pages.length === 0) return "";
+  let result = pages[0];
+  for (let i = 0; i < separators.length; i++) {
+    result += separators[i] + pages[i + 1];
+  }
+  return result;
+}
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function isTransientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /timed out|timeout|non-2xx|5\d\d|fetch|network|aborted|temporarily/i.test(msg);
+}
+
+async function withRetry<T>(fn: () => Promise<T>, retries: number, label: string): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === retries || !isTransientError(err)) break;
+      const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+      console.warn(`[translateMarkdown] ${label} attempt ${attempt + 1} failed; retrying in ${delay}ms`, err);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? "Translation failed"));
+}
+
+function resolveTranslationUnits(
+  markdown: string,
+  maxChunkChars?: number,
+): { units: string[]; separators: string[] | null } {
+  const pageSplit = splitMarkdownByPages(markdown);
+  const usePageSplit =
+    pageSplit.pages.length > 1 && pageSplit.pages.every((p) => p.length <= MAX_PAGE_CHARS);
+
+  if (usePageSplit) {
+    return { units: pageSplit.pages, separators: pageSplit.separators };
+  }
+
+  return {
+    units: splitMarkdownForTranslation(markdown, maxChunkChars ?? FALLBACK_CHUNK_CHARS),
+    separators: null,
+  };
+}
+
 export async function translateMarkdown(
   documentId: string,
   targetLanguage: string,
   markdown?: string,
   options: TranslateMarkdownOptions = {},
 ): Promise<string> {
-  const chunks = splitMarkdownForTranslation(markdown ?? "", options.maxChunkChars);
-  if (chunks.length > 1) {
-    const translatedChunks: string[] = [];
-    for (let i = 0; i < chunks.length; i++) {
-      options.onProgress?.({ current: i + 1, total: chunks.length, phase: "translating" });
-      const { data, error } = await supabase.functions.invoke("translate-markdown", {
-        body: {
-          documentId,
-          targetLanguage,
-          markdown: chunks[i],
-          persist: false,
-          chunkIndex: i,
-          chunkCount: chunks.length,
-        },
-      });
-      if (error) throw new Error(error.message || "Translation failed");
-      if (data?.error) throw new Error(data.details || data.error);
-      translatedChunks.push((data.translatedMarkdown as string).trim());
-    }
+  const source = markdown ?? "";
+  const { units, separators } = resolveTranslationUnits(source, options.maxChunkChars);
+  const concurrency = options.concurrency ?? getDefaultConcurrency();
+  const retries = options.retries ?? DEFAULT_RETRIES;
 
-    const translatedMarkdown = translatedChunks.join("\n\n");
-    options.onProgress?.({ current: chunks.length, total: chunks.length, phase: "saving" });
-    const { data, error } = await supabase.functions.invoke("translate-markdown", {
-      body: { documentId, targetLanguage, markdown, translatedMarkdown, mode: "save" },
-    });
-    if (error) throw new Error(error.message || "Translation save failed");
-    if (data?.error) throw new Error(data.details || data.error);
-    return data.translatedMarkdown as string;
+  const callTranslate = (
+    unit: string,
+    index: number,
+    total: number,
+    persist: boolean,
+  ) =>
+    withRetry(
+      async () => {
+        const { data, error } = await supabase.functions.invoke("translate-markdown", {
+          body: persist
+            ? { documentId, targetLanguage, markdown: unit }
+            : {
+                documentId,
+                targetLanguage,
+                markdown: unit,
+                persist: false,
+                chunkIndex: index,
+                chunkCount: total,
+              },
+        });
+        if (error) throw new Error(error.message || "Translation failed");
+        if (data?.error) throw new Error(data.details || data.error);
+        return data.translatedMarkdown as string;
+      },
+      retries,
+      `page ${index + 1}/${total}`,
+    );
+
+  if (units.length === 1) {
+    const unit = units[0];
+    if (shouldSkipTranslation(unit)) return unit.trimEnd();
+    return callTranslate(unit, 0, 1, true);
   }
 
-  const { data, error } = await supabase.functions.invoke("translate-markdown", {
-    body: { documentId, targetLanguage, markdown },
+  let completed = 0;
+  const translatedUnits = await runWithConcurrency(units, concurrency, async (unit, index) => {
+    if (shouldSkipTranslation(unit)) {
+      completed++;
+      options.onProgress?.({ current: completed, total: units.length, phase: "translating" });
+      return unit.trimEnd();
+    }
+
+    const translated = await callTranslate(unit, index, units.length, false);
+
+    completed++;
+    options.onProgress?.({ current: completed, total: units.length, phase: "translating" });
+    return translated.trim();
   });
-  if (error) throw new Error(error.message || "Translation failed");
-  if (data?.error) throw new Error(data.details || data.error);
-  return data.translatedMarkdown as string;
+
+  const translatedMarkdown = separators
+    ? rejoinPages(translatedUnits, separators)
+    : translatedUnits.join("\n\n");
+
+  options.onProgress?.({ current: units.length, total: units.length, phase: "saving" });
+  const { data: saved, error: saveErr } = await supabase.functions.invoke("translate-markdown", {
+    body: { documentId, targetLanguage, markdown: source, translatedMarkdown, mode: "save" },
+  });
+  if (saveErr) throw new Error(saveErr.message || "Translation save failed");
+  if (saved?.error) throw new Error(saved.details || saved.error);
+  return saved.translatedMarkdown as string;
 }
 
-function splitMarkdownForTranslation(markdown: string, maxChunkChars = 1_800): string[] {
+function splitMarkdownForTranslation(markdown: string, maxChunkChars = FALLBACK_CHUNK_CHARS): string[] {
   if (!markdown.trim()) return [markdown];
   const blocks = parseMarkdownBlocks(markdown).map((block) => block.content.trimEnd()).filter(Boolean);
   const chunks: string[] = [];

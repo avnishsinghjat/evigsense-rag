@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { chatCompletionText } from "../_shared/ai.ts";
+import { chatCompletionText, stripThinkTags } from "../_shared/ai.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -94,12 +94,13 @@ async function translateWithLLM(
   // Build numbered list for LLM
   const numberedTexts = toTranslate.map((item, idx) => `[${idx + 1}] ${item.text}`).join('\n');
   
-  const systemPrompt = `You are a professional translator. Translate from ${sourceName} to ${targetName}.
+  const systemPrompt = `/no_think
+You are a professional translator. Translate from ${sourceName} to ${targetName}.
 Rules:
 - Translate ONLY the text content, preserve meaning and tone
 - Return translations in the EXACT same numbered format
 - Keep numbers, dates, proper nouns, and technical terms as appropriate
-- Do not add explanations or notes
+- Do not add explanations, notes, or <think> tags
 - Each line must start with [number] followed by the translation`;
 
   const userPrompt = `Translate these ${toTranslate.length} texts from ${sourceName} to ${targetName}:
@@ -108,10 +109,18 @@ ${numberedTexts}`;
 
   console.log(`Translating ${toTranslate.length} texts with LLM...`);
 
-  const translatedContent = await chatCompletionText([
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt }
-  ], { temperature: 0.1, max_tokens: 8000 });
+  const rawTranslated = await chatCompletionText(
+    [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    {
+      temperature: 0.1,
+      max_tokens: 8000,
+      extra: { chat_template_kwargs: { enable_thinking: false } },
+    },
+  );
+  const translatedContent = stripThinkTags(rawTranslated);
   
   console.log('LLM response received, parsing...');
   

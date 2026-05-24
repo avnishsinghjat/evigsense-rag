@@ -8,6 +8,7 @@ Document management, RAG assistant, OCR, translation, and signing — **fully of
 - **Docker Desktop** (for self-hosted Supabase)
 - **LM Studio** with these models loaded:
   - Chat model (e.g. `qwen/qwen3.6-35b-a3b`) — set id in `LMSTUDIO_CHAT_MODEL`
+  - Optional dedicated translator (e.g. `google/gemma-4-e4b`) — set id in `LMSTUDIO_TRANSLATE_MODEL` for faster RU→EN markdown translation
   - Embedding model (e.g. `text-embedding-qwen3-embedding-0.6b` or `bge-m3`, both 1024 dims) — set id in `LMSTUDIO_EMBED_MODEL`
   - Chandra VLM for OCR (e.g. `chandra-ocr-2`) — set id in `OCR_MODEL`, or run Chandra native server
 
@@ -119,7 +120,8 @@ See [.env.example](.env.example) for the full list. Key knobs:
 | Variable | Purpose |
 |----------|---------|
 | `LMSTUDIO_BASE_URL` | OpenAI-compatible API (default `http://host.docker.internal:1234/v1`) |
-| `LMSTUDIO_CHAT_MODEL` | Model id for chat, summary, metadata, translation |
+| `LMSTUDIO_CHAT_MODEL` | Model id for chat, summary, metadata |
+| `LMSTUDIO_TRANSLATE_MODEL` | Optional dedicated translator for markdown translation (falls back to `LMSTUDIO_CHAT_MODEL`) |
 | `LMSTUDIO_EMBED_MODEL` | Embedding model (default `bge-m3`, 1024 dims) |
 | `EMBEDDING_DIM` | Must match your embed model (default `1024`) |
 | `OCR_BACKEND` | `lmstudio` (VLM) or `chandra-native` |

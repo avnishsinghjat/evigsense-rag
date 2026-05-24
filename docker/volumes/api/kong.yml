@@ -67,6 +67,12 @@ services:
 
   - name: functions-v1
     url: http://functions:9000/
+    # Edge functions can run long-form LLM calls (translation, OCR, summary).
+    # Default Kong timeouts are 60s which is too short for local Qwen/Chandra.
+    # 360s here pairs with the 400s edge-runtime worker timeout in main/index.ts.
+    connect_timeout: 60000
+    read_timeout: 360000
+    write_timeout: 360000
     routes:
       - name: functions-v1-all
         strip_path: true

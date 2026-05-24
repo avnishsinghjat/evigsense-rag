@@ -207,7 +207,7 @@ export default function TranslationMarkdown() {
           setTranslationProgress(
             phase === "saving"
               ? "Saving translated Markdown…"
-              : `Translating chunk ${current} of ${total}…`,
+              : `Translating page ${current} of ${total}…`,
           );
         },
       });
